@@ -1,0 +1,179 @@
+---
+- name: Install and Configure Apache Tomcat
+  hosts: localhost
+  become: no
+  vars:
+    tomcat_version: "10.1.33"  # Latest stable version
+    tomcat_major: "10"
+    tomcat_user: "pet-clinic"
+    tomcat_home: "/home/{{ tomcat_user }}/tomcat"
+    tomcat_port: 9090
+    tomcat_shutdown_port: 8005
+    java_home: "/home/{{ tomcat_user }}/java/jdk25"
+  tasks:
+    - name: Verify Java is installed
+      stat:
+        path: "{{ java_home }}/bin/java"
+      register: java_check
+    
+    - name: Fail if Java is not installed
+      fail:
+        msg: "Java not found at {{ java_home }}. Run setup-user.sh first!"
+      when: not java_check.stat.exists
+    
+    - name: Display Java version
+      shell: "{{ java_home }}/bin/java -version"
+      register: java_version
+      changed_when: false
+    
+    - name: Show Java version
+      debug:
+        msg: "{{ java_version.stderr_lines }}"
+    
+    - name: Create Tomcat directory
+      file:
+        path: "{{ tomcat_home }}"
+        state: directory
+        mode: '0755'
+    
+    - name: Check if Tomcat is already installed
+      stat:
+        path: "{{ tomcat_home }}/bin/catalina.sh"
+      register: tomcat_check
+    
+    - name: Download Tomcat
+      get_url:
+        url: "https://archive.apache.org/dist/tomcat/tomcat-{{ tomcat_major }}/v{{ tomcat_version }}/bin/apache-tomcat-{{ tomcat_version }}.tar.gz"
+        dest: "/tmp/apache-tomcat-{{ tomcat_version }}.tar.gz"
+        mode: '0644'
+      when: not tomcat_check.stat.exists
+    
+    - name: Extract Tomcat
+      unarchive:
+        src: "/tmp/apache-tomcat-{{ tomcat_version }}.tar.gz"
+        dest: "{{ tomcat_home }}"
+        remote_src: yes
+        extra_opts: [--strip-components=1]
+      when: not tomcat_check.stat.exists
+    
+    - name: Remove Tomcat archive
+      file:
+        path: "/tmp/apache-tomcat-{{ tomcat_version }}.tar.gz"
+        state: absent
+    
+    - name: Configure Tomcat port to 9090
+      lineinfile:
+        path: "{{ tomcat_home }}/conf/server.xml"
+        regexp: '<Connector port="8080"'
+        line: '    <Connector port="{{ tomcat_port }}" protocol="HTTP/1.1"'
+        backup: yes
+    
+    - name: Configure Tomcat shutdown port
+      lineinfile:
+        path: "{{ tomcat_home }}/conf/server.xml"
+        regexp: '<Server port="8005"'
+        line: '<Server port="{{ tomcat_shutdown_port }}" shutdown="SHUTDOWN">'
+        backup: yes
+    
+    - name: Configure Tomcat users for deployment
+      copy:
+        dest: "{{ tomcat_home }}/conf/tomcat-users.xml"
+        content: |
+          <?xml version="1.0" encoding="UTF-8"?>
+          <tomcat-users xmlns="http://tomcat.apache.org/xml"
+                        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                        xsi:schemaLocation="http://tomcat.apache.org/xml tomcat-users.xsd"
+                        version="1.0">
+            <role rolename="manager-gui"/>
+            <role rolename="manager-script"/>
+            <role rolename="manager-jmx"/>
+            <role rolename="manager-status"/>
+            <role rolename="admin-gui"/>
+            <user username="admin" password="123" roles="manager-gui,admin-gui"/>
+            <user username="deployer" password="123" roles="manager-script"/>
+          </tomcat-users>
+        mode: '0640'
+    
+    - name: Make Tomcat scripts executable
+      file:
+        path: "{{ tomcat_home }}/bin/{{ item }}"
+        mode: '0755'
+      loop:
+        - catalina.sh
+        - startup.sh
+        - shutdown.sh
+    
+    - name: Create startup script with Java path
+      copy:
+        dest: "{{ tomcat_home }}/bin/setenv.sh"
+        content: |
+          #!/bin/bash
+          export JAVA_HOME={{ java_home }}
+          export PATH=$JAVA_HOME/bin:$PATH
+          export CATALINA_HOME={{ tomcat_home }}
+          export CATALINA_PID={{ tomcat_home }}/tomcat.pid
+        mode: '0755'
+    
+    - name: Check if Tomcat is running
+      shell: |
+        if [ -f {{ tomcat_home }}/tomcat.pid ]; then
+          PID=$(cat {{ tomcat_home }}/tomcat.pid)
+          if ps -p $PID > /dev/null; then
+            echo "running"
+          else
+            echo "not_running"
+          fi
+        else
+          echo "not_running"
+        fi
+      register: tomcat_status
+      changed_when: false
+    
+    - name: Stop Tomcat if running (for reconfiguration)
+      shell: "{{ tomcat_home }}/bin/shutdown.sh"
+      when: tomcat_status.stdout == "running"
+      ignore_errors: yes
+    
+    - name: Wait for Tomcat to stop
+      wait_for:
+        port: "{{ tomcat_port }}"
+        state: stopped
+        timeout: 30
+      when: tomcat_status.stdout == "running"
+      ignore_errors: yes
+    
+    - name: Start Tomcat
+      shell: |
+        export JAVA_HOME={{ java_home }}
+        export PATH=$JAVA_HOME/bin:$PATH
+        {{ tomcat_home }}/bin/startup.sh
+      register: tomcat_start
+    
+    - name: Wait for Tomcat to start
+      wait_for:
+        port: "{{ tomcat_port }}"
+        delay: 5
+        timeout: 60
+    
+    - name: Display Tomcat status
+      debug:
+        msg:
+          - "Tomcat is running on port {{ tomcat_port }}"
+          - "Access at: http://localhost:{{ tomcat_port }}"
+          - "Manager URL: http://localhost:{{ tomcat_port }}/manager"
+          - "Admin username: admin"
+          - "Admin password: 123"
+    
+    - name: Verify Tomcat is accessible
+      uri:
+        url: "http://localhost:{{ tomcat_port }}"
+        status_code: 200
+        timeout: 10
+      register: result
+      retries: 3
+      delay: 5
+      ignore_errors: yes
+    
+    - name: Show verification result
+      debug:
+        msg: "Tomcat verification: {{ 'SUCCESS' if result.status == 200 else 'FAILED - Check logs' }}"

@@ -1,0 +1,131 @@
+---
+################################################################################
+# Playbook: deploy-petclinic.yml
+# Description: Deploy PetClinic WAR to Tomcat and run sanity checks
+################################################################################
+
+- name: Deploy PetClinic to Tomcat
+  hosts: localhost
+  become: no
+  vars:
+    app_user: "pet-clinic"
+    war_file: "/home/{{ app_user }}/build/petclinic.war"
+    tomcat_home: "/home/{{ app_user }}/tomcat"
+    tomcat_port: 9090
+    app_context: "petclinic"
+    java21_home: "/home/{{ app_user }}/java/jdk21"
+    
+  tasks:
+    - name: Check if WAR file exists
+      stat:
+        path: "{{ war_file }}"
+      register: war_check
+      
+    - name: Fail if WAR not found
+      fail:
+        msg: "WAR file not found at {{ war_file }}. Run build script first!"
+      when: not war_check.stat.exists
+
+    - name: Check if Tomcat is running
+      shell: |
+        if [ -f {{ tomcat_home }}/tomcat.pid ]; then
+          PID=$(cat {{ tomcat_home }}/tomcat.pid)
+          if ps -p $PID > /dev/null 2>&1; then
+            echo "running"
+          else
+            echo "stopped"
+          fi
+        else
+          echo "stopped"
+        fi
+      register: tomcat_status
+      changed_when: false
+
+    - name: Stop Tomcat if running
+      shell: |
+        export JAVA_HOME={{ java21_home }}
+        export PATH=$JAVA_HOME/bin:$PATH
+        {{ tomcat_home }}/bin/shutdown.sh
+      when: tomcat_status.stdout == "running"
+      ignore_errors: yes
+
+    - name: Wait for Tomcat to stop
+      wait_for:
+        port: "{{ tomcat_port }}"
+        state: stopped
+        timeout: 30
+      when: tomcat_status.stdout == "running"
+      ignore_errors: yes
+
+    - name: Remove old application directory
+      file:
+        path: "{{ tomcat_home }}/webapps/{{ app_context }}"
+        state: absent
+
+    - name: Remove old WAR file
+      file:
+        path: "{{ tomcat_home }}/webapps/{{ app_context }}.war"
+        state: absent
+
+    - name: Deploy new WAR file
+      copy:
+        src: "{{ war_file }}"
+        dest: "{{ tomcat_home }}/webapps/{{ app_context }}.war"
+        remote_src: yes
+        mode: '0644'
+
+    - name: Start Tomcat with Java 21
+      shell: |
+        export JAVA_HOME={{ java21_home }}
+        export PATH=$JAVA_HOME/bin:$PATH
+        {{ tomcat_home }}/bin/startup.sh
+      register: tomcat_start
+
+    - name: Wait for Tomcat to start
+      wait_for:
+        port: "{{ tomcat_port }}"
+        delay: 5
+        timeout: 60
+
+    - name: Wait for application deployment
+      pause:
+        seconds: 30
+        prompt: "Waiting for PetClinic to deploy..."
+
+    - name: Check application is accessible
+      uri:
+        url: "http://localhost:{{ tomcat_port }}/{{ app_context }}"
+        status_code: 200
+        timeout: 10
+      register: app_check
+      retries: 10
+      delay: 5
+      until: app_check.status == 200
+
+    - name: Run sanity checks
+      uri:
+        url: "http://localhost:{{ tomcat_port }}/{{ app_context }}/{{ item }}"
+        status_code: 200
+      loop:
+        - ""
+        - "vets.html"
+        - "owners/find"
+      register: sanity_results
+
+    - name: Display deployment results
+      debug:
+        msg:
+          - "=========================================="
+          - "✓ PetClinic Deployed Successfully!"
+          - "=========================================="
+          - ""
+          - "Application URL: http://localhost:{{ tomcat_port }}/{{ app_context }}"
+          - "Tomcat Port: {{ tomcat_port }}"
+          - "Runtime: Java 21"
+          - ""
+          - "Sanity Checks:"
+          - "  ✓ Home page: OK"
+          - "  ✓ Vets page: OK"
+          - "  ✓ Find owners: OK"
+          - ""
+          - "=========================================="

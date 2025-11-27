@@ -1,0 +1,262 @@
+---
+################################################################################
+# Playbook: install-jenkins.yml  
+# Description: Install Jenkins manually (no root/package managers)
+# Target: jenkins_servers
+################################################################################
+
+- name: Install Jenkins (No Root - Manual Installation)
+  hosts: localhost
+  become: no
+  vars:
+    jenkins_user: "pet-clinic"
+    jenkins_home: "/home/{{ jenkins_user }}/jenkins"
+    jenkins_version: "2.528.2"  
+    jenkins_war_url: "https://get.jenkins.io/war-stable/{{ jenkins_version }}/jenkins.war"
+    jenkins_port: 8080
+    java_home: "/home/{{ jenkins_user }}/java/jdk21"
+    
+  tasks:
+    - name: Verify Java is installed
+      stat:
+        path: "{{ java_home }}/bin/java"
+      register: java_check
+      
+    - name: Fail if Java is not installed
+      fail:
+        msg: "Java not found at {{ java_home }}. Run setup-user.sh first!"
+      when: not java_check.stat.exists
+
+    - name: Display Java version
+      shell: "{{ java_home }}/bin/java -version"
+      register: java_version
+      changed_when: false
+      
+    - name: Show Java version
+      debug:
+        msg: "{{ java_version.stderr_lines }}"
+
+    - name: Create Jenkins directory
+      file:
+        path: "{{ jenkins_home }}"
+        state: directory
+        mode: '0755'
+
+    - name: Check if Jenkins WAR already exists
+      stat:
+        path: "{{ jenkins_home }}/jenkins.war"
+      register: jenkins_war_check
+
+    - name: Download Jenkins WAR file (version {{ jenkins_version }})
+      get_url:
+        url: "{{ jenkins_war_url }}"
+        dest: "{{ jenkins_home }}/jenkins.war"
+        mode: '0644'
+        timeout: 300
+      when: not jenkins_war_check.stat.exists
+      register: download_result
+
+    - name: Verify Jenkins WAR downloaded successfully
+      stat:
+        path: "{{ jenkins_home }}/jenkins.war"
+      register: jenkins_war_verify
+      
+    - name: Fail if Jenkins WAR not found after download
+      fail:
+        msg: "Jenkins WAR file download failed!"
+      when: not jenkins_war_verify.stat.exists
+
+    - name: Display Jenkins WAR file info
+      debug:
+        msg: "Jenkins {{ jenkins_version }} WAR file size: {{ (jenkins_war_verify.stat.size / 1024 / 1024) | round(2) }} MB"
+
+    - name: Create Jenkins startup script
+      copy:
+        dest: "{{ jenkins_home }}/start-jenkins.sh"
+        content: |
+          #!/bin/bash
+          ################################################################################
+          # Jenkins Startup Script
+          # Version: {{ jenkins_version }}
+          ################################################################################
+          
+          export JAVA_HOME={{ java_home }}
+          export JENKINS_HOME={{ jenkins_home }}
+          export PATH=$JAVA_HOME/bin:$PATH
+          
+          echo "Starting Jenkins {{ jenkins_version }}..."
+          cd {{ jenkins_home }}
+          
+          # Start Jenkins in background
+          nohup java -jar jenkins.war --httpPort={{ jenkins_port }} > jenkins.log 2>&1 &
+          
+          # Save PID
+          echo $! > jenkins.pid
+          
+          echo "Jenkins started with PID: $(cat jenkins.pid)"
+          echo "Access Jenkins at: http://localhost:{{ jenkins_port }}"
+          echo "Log file: {{ jenkins_home }}/jenkins.log"
+        mode: '0755'
+
+    - name: Create Jenkins stop script
+      copy:
+        dest: "{{ jenkins_home }}/stop-jenkins.sh"
+        content: |
+          #!/bin/bash
+          ################################################################################
+          # Jenkins Stop Script
+          ################################################################################
+          
+          PID_FILE={{ jenkins_home }}/jenkins.pid
+          
+          if [ -f "$PID_FILE" ]; then
+            PID=$(cat "$PID_FILE")
+            
+            if ps -p $PID > /dev/null 2>&1; then
+              echo "Stopping Jenkins (PID: $PID)..."
+              kill $PID
+              
+              # Wait for graceful shutdown
+              for i in {1..30}; do
+                if ! ps -p $PID > /dev/null 2>&1; then
+                  echo "Jenkins stopped successfully"
+                  rm "$PID_FILE"
+                  exit 0
+                fi
+                sleep 1
+              done
+              
+              # Force kill if still running
+              echo "Force stopping Jenkins..."
+              kill -9 $PID
+              rm "$PID_FILE"
+            else
+              echo "Jenkins process not running"
+              rm "$PID_FILE"
+            fi
+          else
+            echo "Jenkins PID file not found"
+          fi
+        mode: '0755'
+
+    - name: Create Jenkins status script
+      copy:
+        dest: "{{ jenkins_home }}/status-jenkins.sh"
+        content: |
+          #!/bin/bash
+          ################################################################################
+          # Jenkins Status Script
+          ################################################################################
+          
+          PID_FILE={{ jenkins_home }}/jenkins.pid
+          
+          if [ -f "$PID_FILE" ]; then
+            PID=$(cat "$PID_FILE")
+            if ps -p $PID > /dev/null 2>&1; then
+              echo "Jenkins is RUNNING (PID: $PID)"
+              echo "Port: {{ jenkins_port }}"
+              echo "URL: http://localhost:{{ jenkins_port }}"
+              exit 0
+            else
+              echo "Jenkins is NOT running (stale PID file)"
+              exit 1
+            fi
+          else
+            echo "Jenkins is NOT running"
+            exit 1
+          fi
+        mode: '0755'
+
+    - name: Check if Jenkins is currently running
+      shell: |
+        if [ -f {{ jenkins_home }}/jenkins.pid ]; then
+          PID=$(cat {{ jenkins_home }}/jenkins.pid)
+          if ps -p $PID > /dev/null 2>&1; then
+            echo "running"
+          else
+            echo "not_running"
+          fi
+        else
+          echo "not_running"
+        fi
+      register: jenkins_status
+      changed_when: false
+
+    - name: Stop Jenkins if running (for clean restart)
+      shell: "{{ jenkins_home }}/stop-jenkins.sh"
+      when: jenkins_status.stdout == "running"
+      ignore_errors: yes
+
+    - name: Wait for Jenkins to stop
+      wait_for:
+        port: "{{ jenkins_port }}"
+        state: stopped
+        timeout: 30
+      when: jenkins_status.stdout == "running"
+      ignore_errors: yes
+
+    - name: Start Jenkins
+      shell: "{{ jenkins_home }}/start-jenkins.sh"
+      register: jenkins_start
+      
+    - name: Display startup message
+      debug:
+        msg: "{{ jenkins_start.stdout_lines }}"
+
+    - name: Wait for Jenkins port to be available
+      wait_for:
+        port: "{{ jenkins_port }}"
+        delay: 10
+        timeout: 120
+        msg: "Jenkins did not start within 2 minutes"
+
+    - name: Wait for Jenkins to be fully initialized (additional time)
+      pause:
+        seconds: 30
+        prompt: "Waiting for Jenkins to fully initialize..."
+
+    - name: Check if initial admin password file exists
+      stat:
+        path: "{{ jenkins_home }}/secrets/initialAdminPassword"
+      register: password_file
+      retries: 5
+      delay: 10
+      until: password_file.stat.exists
+
+    - name: Get Jenkins initial admin password
+      slurp:
+        src: "{{ jenkins_home }}/secrets/initialAdminPassword"
+      register: jenkins_password
+      when: password_file.stat.exists
+
+    - name: Verify Jenkins is accessible
+      uri:
+        url: "http://localhost:{{ jenkins_port }}"
+        status_code: 
+          - 200
+          - 403  # Jenkins returns 403 before setup is complete
+        timeout: 10
+      register: jenkins_access
+      retries: 5
+      delay: 10
+
+    - name: Display Jenkins information
+      debug:
+        msg:
+          - "=========================================="
+          - "Jenkins {{ jenkins_version }} Installation Complete!"
+          - "=========================================="
+          - ""
+          - "Access URL: http://localhost:{{ jenkins_port }}"
+          - "Jenkins Home: {{ jenkins_home }}"
+          - ""
+          - "Initial Admin Password:"
+          - "{{ jenkins_password.content | b64decode if jenkins_password.content is defined else 'Check ' + jenkins_home + '/secrets/initialAdminPassword' }}"
+          - ""
+          - "Management Scripts:"
+          - "  Start:  {{ jenkins_home }}/start-jenkins.sh"
+          - "  Stop:   {{ jenkins_home }}/stop-jenkins.sh"
+          - "  Status: {{ jenkins_home }}/status-jenkins.sh"
+          - ""
+          - "Log File: {{ jenkins_home }}/jenkins.log"
+          - "=========================================="

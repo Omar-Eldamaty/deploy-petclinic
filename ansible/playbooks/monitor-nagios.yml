@@ -1,0 +1,71 @@
+---
+- name: Configure Nagios to monitor Tomcat (NO ROOT REQUIRED)
+  hosts: localhost
+  become: no
+
+  vars:
+    nagios_cfg_dir: "/usr/local/nagios/etc"
+    nagios_objects_dir: "/usr/local/nagios/etc/objects"
+    nagios_servers_dir: "/usr/local/nagios/etc/servers"
+    nagios_cmd_pipe: "/usr/local/nagios/var/rw/nagios.cmd"
+    tomcat_host: "localhost"
+    tomcat_port: "9090"
+    tomcat_url: "/petclinic"
+
+  tasks:
+
+    - name: Ensure servers directory exists (rootless)
+      file:
+        path: "{{ nagios_servers_dir }}"
+        state: directory
+        mode: "0770"
+
+    - name: Deploy Tomcat host definition
+      copy:
+        dest: "{{ nagios_servers_dir }}/tomcat_host.cfg"
+        mode: "0660"
+        content: |
+          define host {
+            use                     linux-server
+            host_name               tomcat-server
+            alias                   Tomcat Application Server
+            address                 {{ tomcat_host }}
+          }
+
+    - name: Deploy Tomcat service checks
+      copy:
+        dest: "{{ nagios_servers_dir }}/tomcat_services.cfg"
+        mode: "0660"
+        content: |
+          define service {
+            use                     generic-service
+            host_name               tomcat-server
+            service_description     Tomcat HTTP Check
+            check_command           check_http!-I {{ tomcat_host }} -p {{ tomcat_port }} -u {{ tomcat_url }}
+          }
+
+          define service {
+            use                     generic-service
+            host_name               tomcat-server
+            service_description     Tomcat Process Running
+            check_command           check_procs!-C java
+          }
+
+    - name: Validate Nagios configuration syntax
+      command: "/usr/local/nagios/bin/nagios -v {{ nagios_cfg_dir }}/nagios.cfg"
+      register: nagios_validation
+      failed_when: "'Things look okay' not in nagios_validation.stdout"
+
+    - name: Show validation output
+      debug:
+        var: nagios_validation.stdout
+
+    - name: Reload Nagios (NO ROOT, via command pipe)
+      shell: |
+        echo "[`date +%s`] RELOAD_CONFIG" > {{ nagios_cmd_pipe }}
+
+    - name: Notify user
+      debug:
+        msg: "Nagios reloaded successfully without root privileges."
+
+

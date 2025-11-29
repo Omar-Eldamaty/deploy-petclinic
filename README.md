@@ -2,7 +2,7 @@
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
 [![Jenkins](https://img.shields.io/badge/Jenkins-2.528.2-red)]()
-[![Tomcat](https://img.shields.io/badge/Tomcat-9.0.82-yellow)]()
+[![Tomcat](https://img.shields.io/badge/Tomcat-10.1.33-yellow)]()
 [![Java](https://img.shields.io/badge/Java-21%20%7C%2025-orange)]()
 
 > Fully automated CI/CD pipeline for Spring PetClinic application using Ansible, Jenkins, and shell scripting - demonstrating DevOps best practices without relying on package managers.
@@ -19,8 +19,6 @@
 - [Documentation](#documentation)
 - [Project Structure](#project-structure)
 - [Technologies](#technologies)
-- [Contributing](#contributing)
-- [License](#license)
 
 ---
 
@@ -56,7 +54,7 @@ This project demonstrates a complete DevOps workflow for deploying the Spring Pe
 - Ansible playbooks for service installation
 - Tomcat web server configuration (port 9090)
 - Jenkins CI/CD server setup (port 8080)
-- Process monitoring scripts
+- Process monitoring using Nagios (port 80)
 
 ### 🔧 Configuration Management
 - Multi-Java version support (Java 21 for runtime, Java 25 for builds)
@@ -112,7 +110,7 @@ This project demonstrates a complete DevOps workflow for deploying the Spring Pe
 3. Pipeline builds application with Maven (Java 25)
 4. Ansible deploys WAR to Tomcat
 5. Tomcat runs application (Java 21)
-6. Monitoring scripts verify health
+6. Monitoring tool verify health
 7. Users access application on port 9090
 
 ---
@@ -129,7 +127,7 @@ This project demonstrates a complete DevOps workflow for deploying the Spring Pe
 - Java 21 (Jenkins & Tomcat runtime)
 - Java 25 (Maven builds)
 - Maven 3.8.8
-- Tomcat 9.0.82
+- Tomcat 10.1.33
 - Jenkins 2.528.2
 - Ansible (only component requiring package manager)
 
@@ -145,7 +143,7 @@ This project demonstrates a complete DevOps workflow for deploying the Spring Pe
 ### Step 1: Initial Setup (as root)
 ```bash
 # Download and run user setup script
-wget https://raw.githubusercontent.com/YOUR_USERNAME/pet-clinic-devops/main/setup/setup-pet-clinic-user.sh
+wget https://raw.githubusercontent.com/Omar-Eldamaty/deploy-petclinic/main/setup/setup-pet-clinic-user.sh
 sudo bash setup-pet-clinic-user.sh
 ```
 
@@ -157,8 +155,8 @@ This creates the `pet-clinic` user and installs both Java versions.
 su - pet-clinic
 
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/pet-clinic-devops.git
-cd pet-clinic-devops
+git clone https://github.com/Omar-Eldamaty/deploy-petclinic.git
+cd deploy-petclinic
 ```
 
 ### Step 3: Install Services
@@ -167,10 +165,10 @@ cd pet-clinic-devops
 sudo bash scripts/install-ansible.sh
 
 # Install Tomcat
-ansible-playbook ansible/playbooks/install-tomcat.yml
+ansible-playbook ansible/playbooks/tomcat.yml
 
 # Install Jenkins
-ansible-playbook ansible/playbooks/install-jenkins.yml
+ansible-playbook ansible/playbooks/jenkins.yml
 
 # Install Monitoring
 ansible-playbook ansible/playbooks/install-monitoring.yml
@@ -185,7 +183,7 @@ ansible-playbook ansible/playbooks/install-monitoring.yml
    - **Name**: `petclinic-pipeline`
    - **Type**: Pipeline
    - **Pipeline script from SCM**: Git
-   - **Repository URL**: `https://github.com/YOUR_USERNAME/pet-clinic-devops.git`
+   - **Repository URL**: `https://github.com/Omar-Eldamaty/deploy-petclinic.git`
    - **Script Path**: `jenkins/Jenkinsfile`
 
 ### Step 5: Test Deployment
@@ -212,20 +210,17 @@ Detailed documentation is available in the `docs/` directory:
 
 | Document | Description | Audience |
 |----------|-------------|----------|
-| [User Manual](docs/USER_MANUAL.md) | How to use the deployed application | End Users |
+| [User Manual](docs/USER_MANUAL.md) | Step-by-step installation instructions | End Users |
 | [Project Manual](docs/PROJECT_MANUAL.md) | Technical details and development guide | Developers/DevOps |
-| [Setup Guide](docs/SETUP_GUIDE.md) | Step-by-step installation instructions | System Administrators |
-| [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions | All Users |
-| [Architecture](docs/ARCHITECTURE.md) | System design and component details | Technical Leads |
 
 ---
 
 ## 📂 Project Structure
 ```
-pet-clinic-devops/
+deploy-petclinic/
 ├── setup/                          # Initial system setup
-│   ├── setup-pet-clinic-user.sh   # User and Java installation
-│   └── README.md                   # Setup instructions
+│   └── setup-pet-clinic-user.sh   # User and Java installation
+│   
 │
 ├── spring-petclinic/              # Application source code
 │   ├── src/                       # Java source files
@@ -233,19 +228,19 @@ pet-clinic-devops/
 │   └── mvnw                       # Maven wrapper
 │
 ├── scripts/                       # Automation scripts
-│   ├── build-petclinic.sh        # Build WAR file
-│   ├── deploy-to-root.sh         # Deploy to Tomcat
-│   ├── sanity-check.sh           # Health checks
-│   └── start-tomcat-detached.sh  # Tomcat daemon
+│   ├── create-servlet-initializer.sh        # create servlet initializer
+│   └── maven_download.sh         # Build WAR file and Deploy to Tomcat
+│   
 │
-├── ansible/                       # Infrastructure as Code
-│   ├── ansible.cfg               # Ansible configuration
-│   ├── inventory/                # Server inventory
+├── ansible/                       # Configuration Management
+│   │   ├── inventory/                # Server inventory
 │   │   └── hosts.ini
 │   └── playbooks/                # Automation playbooks
-│       ├── install-tomcat.yml
-│       ├── install-jenkins.yml
-│       ├── deploy_petclinic.yml
+│       ├── tomcat.yml
+│       ├── jenkins.yml
+│       ├── nagios.yml
+│       ├── monitor-nagios.yml
+│       ├── deploy-petclinic.yml
 │       └── verify_petclinic.yml
 │
 ├── jenkins/                       # CI/CD pipeline
@@ -253,11 +248,8 @@ pet-clinic-devops/
 │
 ├── docs/                          # Documentation
 │   ├── USER_MANUAL.md
-│   ├── PROJECT_MANUAL.md
-│   ├── SETUP_GUIDE.md
-│   ├── TROUBLESHOOTING.md
-│   └── ARCHITECTURE.md
-│
+│   └── PROJECT_MANUAL.md
+│  
 ├── .gitignore                     # Git ignore rules
 └── README.md                      # This file
 ```
@@ -270,7 +262,7 @@ pet-clinic-devops/
 - **Java**: 21 (Runtime) & 25 (Build)
 - **Spring Boot**: 4.0.0-SNAPSHOT
 - **Maven**: 3.8.8
-- **Apache Tomcat**: 9.0.82
+- **Apache Tomcat**: 10.1.33
 - **Jenkins**: 2.528.2
 
 ### Automation Tools
@@ -279,49 +271,9 @@ pet-clinic-devops/
 - **Git**: Version control
 
 ### Monitoring
-- Custom bash scripts for process monitoring
+- Nagios for process monitoring
 - Port availability checks
 - HTTP endpoint verification
-
----
-
-## 💻 Key Commands
-
-### Application Management
-```bash
-# Build application
-bash scripts/build-petclinic.sh
-
-# Deploy to Tomcat
-ansible-playbook ansible/playbooks/deploy_petclinic.yml
-
-# Run sanity checks
-bash scripts/sanity-check.sh
-
-# Start monitoring
-bash ~/monitoring/start-monitoring.sh
-```
-
-### Service Management
-```bash
-# Tomcat
-~/tomcat/bin/startup.sh          # Start
-~/tomcat/bin/shutdown.sh         # Stop
-tail -f ~/tomcat/logs/catalina.out  # Logs
-
-# Jenkins
-~/jenkins/start-jenkins.sh       # Start
-~/jenkins/stop-jenkins.sh        # Stop
-~/jenkins/status-jenkins.sh      # Status
-tail -f ~/jenkins/jenkins.log    # Logs
-```
-
-### Java Version Switching
-```bash
-java21                           # Switch to Java 21
-java25                           # Switch to Java 25
-java -version                    # Check current version
-```
 
 ---
 
@@ -330,7 +282,7 @@ java -version                    # Check current version
 ### Tomcat Manager
 - **URL**: http://localhost:9090/manager
 - **Username**: `admin`
-- **Password**: `admin123`
+- **Password**: `123`
 
 ### Jenkins
 - **URL**: http://localhost:8080
@@ -358,12 +310,12 @@ curl http://localhost:8080/
 curl http://localhost:9090/petclinic
 
 # Check monitoring
-bash ~/monitoring/monitor-all.sh
+curl http://localhost/nagios/
 ```
 
 ---
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Quick Diagnostics
 ```bash
@@ -378,7 +330,6 @@ tail -50 ~/tomcat/logs/catalina.out
 tail -50 ~/jenkins/jenkins.log
 ```
 
-For detailed troubleshooting, see [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
 ---
 
@@ -395,33 +346,12 @@ The CI/CD pipeline automatically:
 
 ---
 
-## 🤝 Contributing
-
-Contributions are welcome! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-## 📝 License
-
-This project is created for educational purposes. 
-
-- **DevOps Configuration**: Free to use and modify
-- **Spring PetClinic Application**: Licensed under Apache License 2.0
-
----
-
 ## 👥 Project Information
 
 - **Author**: DevOps Team
 - **Version**: 1.0
 - **Last Updated**: November 2025
-- **Repository**: https://github.com/YOUR_USERNAME/pet-clinic-devops
+- **Repository**: https://github.com/Omar-Eldamaty/deploy-petclinic
 
 ---
 
@@ -430,16 +360,7 @@ This project is created for educational purposes.
 - [Spring PetClinic Official](https://github.com/spring-projects/spring-petclinic)
 - [Jenkins Documentation](https://www.jenkins.io/doc/)
 - [Ansible Documentation](https://docs.ansible.com/)
-- [Apache Tomcat Documentation](https://tomcat.apache.org/tomcat-9.0-doc/)
-
----
-
-## 📞 Support
-
-For issues or questions:
-- Create an issue in GitHub
-- Check [Troubleshooting Guide](docs/TROUBLESHOOTING.md)
-- Review [Project Manual](docs/PROJECT_MANUAL.md)
+- [Apache Tomcat Documentation](https://tomcat.apache.org/tomcat-10.0-doc/)
 
 ---
 

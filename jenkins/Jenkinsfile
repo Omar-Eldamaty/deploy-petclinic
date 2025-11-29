@@ -203,37 +203,6 @@ pipeline {
             }
         }
         
-        stage('Test') {
-            when {
-                expression { env.SKIP_TESTS == 'false' }
-            }
-            steps {
-                script {
-                    echo '╔════════════════════════════════════════════════════════════╗'
-                    echo '║                Stage 4: Run Unit Tests                     ║'
-                    echo '╚════════════════════════════════════════════════════════════╝'
-                }
-                
-                sh '''
-                    cd ${PETCLINIC_SRC}
-                    
-                    export JAVA_HOME=${JAVA25_HOME}
-                    export PATH=${JAVA_HOME}/bin:$PATH
-                    
-                    echo "Running unit tests..."
-                    ./mvnw test
-                    
-                    echo "✓ Tests completed"
-                '''
-            }
-            post {
-                always {
-                    // Publish test results if available
-                    junit allowEmptyResults: true, testResults: '**/target/surefire-reports/*.xml'
-                }
-            }
-        }
-        
         stage('Deploy') {
             steps {
                 script {

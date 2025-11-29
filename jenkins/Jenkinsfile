@@ -30,7 +30,9 @@
 
 pipeline {
     agent any
-    
+    triggers {
+        githubPush()
+    }
     environment {
         // Java Configuration
         JAVA25_HOME = '/home/pet-clinic/java/jdk25'

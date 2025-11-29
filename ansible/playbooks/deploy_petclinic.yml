@@ -41,22 +41,6 @@
       register: tomcat_status
       changed_when: false
 
-    - name: Stop Tomcat if running
-      shell: |
-        export JAVA_HOME={{ java21_home }}
-        export PATH=$JAVA_HOME/bin:$PATH
-        {{ tomcat_home }}/bin/shutdown.sh
-      when: tomcat_status.stdout == "running"
-      ignore_errors: yes
-
-    - name: Wait for Tomcat to stop
-      wait_for:
-        port: "{{ tomcat_port }}"
-        state: stopped
-        timeout: 30
-      when: tomcat_status.stdout == "running"
-      ignore_errors: yes
-
     - name: Remove old application directory
       file:
         path: "{{ tomcat_home }}/webapps/{{ app_context }}"
@@ -73,19 +57,6 @@
         dest: "{{ tomcat_home }}/webapps/{{ app_context }}.war"
         remote_src: yes
         mode: '0644'
-
-    - name: Start Tomcat with Java 21
-      shell: |
-        export JAVA_HOME={{ java21_home }}
-        export PATH=$JAVA_HOME/bin:$PATH
-        {{ tomcat_home }}/bin/startup.sh
-      register: tomcat_start
-
-    - name: Wait for Tomcat to start
-      wait_for:
-        port: "{{ tomcat_port }}"
-        delay: 5
-        timeout: 60
 
     - name: Wait for application deployment
       pause:

@@ -1,71 +1,109 @@
 ---
-- name: Configure Nagios to monitor Tomcat (NO ROOT REQUIRED)
+- name: Monitor PetClinic HTTP + Tomcat process (rootless)
   hosts: localhost
   become: no
-
   vars:
     nagios_cfg_dir: "/usr/local/nagios/etc"
     nagios_objects_dir: "/usr/local/nagios/etc/objects"
     nagios_servers_dir: "/usr/local/nagios/etc/servers"
     nagios_cmd_pipe: "/usr/local/nagios/var/rw/nagios.cmd"
-    tomcat_host: "localhost"
+    tomcat_host: "127.0.0.1"
     tomcat_port: "9090"
-    tomcat_url: "/petclinic"
-
+    petclinic_url: "/petclinic"
+    petclinic_check_string: "Spring PetClinic"
   tasks:
-
-    - name: Ensure servers directory exists (rootless)
+    - name: Ensure servers directory exists
       file:
         path: "{{ nagios_servers_dir }}"
         state: directory
         mode: "0770"
-
-    - name: Deploy Tomcat host definition
-      copy:
-        dest: "{{ nagios_servers_dir }}/tomcat_host.cfg"
-        mode: "0660"
-        content: |
-          define host {
-            use                     linux-server
-            host_name               tomcat-server
-            alias                   Tomcat Application Server
-            address                 {{ tomcat_host }}
+    
+    - name: Ensure nagios.cfg is readable
+      file:
+        path: "{{ nagios_cfg_dir }}/nagios.cfg"
+        mode: "0640"
+    
+    - name: Fix lock file location
+      lineinfile:
+        path: "{{ nagios_cfg_dir }}/nagios.cfg"
+        regexp: '^lock_file='
+        line: 'lock_file=/usr/local/nagios/var/nagios.lock'
+    
+    - name: Ensure objects directory exists
+      file:
+        path: "{{ nagios_objects_dir }}"
+        state: directory
+        mode: "0770"
+    - name: Add check_http command for PetClinic
+      blockinfile:
+        path: "{{ nagios_objects_dir }}/commands.cfg"
+        marker: "# {mark} ANSIBLE MANAGED PETCLINIC COMMAND"
+        block: |
+          define command{
+              command_name    check_petclinic_http
+              command_line    /usr/local/nagios/libexec/check_http -H $ARG1$ -p $ARG2$ -u $ARG3$ -s "$ARG4$" --onredirect=critical
           }
-
-    - name: Deploy Tomcat service checks
+          define command{
+              command_name    check_procs
+              command_line    /usr/local/nagios/libexec/check_procs $ARG1$
+          }
+    - name: Remove duplicate localhost host definition if exists
+      file:
+        path: "{{ nagios_servers_dir }}/localhost_host.cfg"
+        state: absent
+    
+    - name: Find files with illegal service descriptions
+      shell: grep -l "Tomcat Application (petclinic)" {{ nagios_servers_dir }}/* {{ nagios_objects_dir }}/* 2>/dev/null || true
+      register: illegal_files
+      changed_when: false
+    
+    - name: Remove files with illegal service descriptions
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ illegal_files.stdout_lines }}"
+      when: illegal_files.stdout_lines | length > 0
+    
+    - name: Remove existing petclinic services to avoid duplicates
+      file:
+        path: "{{ nagios_servers_dir }}/petclinic_services.cfg"
+        state: absent
+    
+    - name: Deploy PetClinic service for localhost
       copy:
-        dest: "{{ nagios_servers_dir }}/tomcat_services.cfg"
+        dest: "{{ nagios_servers_dir }}/petclinic_services.cfg"
         mode: "0660"
         content: |
           define service {
             use                     generic-service
-            host_name               tomcat-server
-            service_description     Tomcat HTTP Check
-            check_command           check_http!-I {{ tomcat_host }} -p {{ tomcat_port }} -u {{ tomcat_url }}
+            host_name               localhost
+            service_description     PetClinic HTTP Check
+            check_command           check_petclinic_http!{{ tomcat_host }}!{{ tomcat_port }}!{{ petclinic_url }}!{{ petclinic_check_string }}
           }
-
           define service {
             use                     generic-service
-            host_name               tomcat-server
-            service_description     Tomcat Process Running
+            host_name               localhost
+            service_description     Tomcat Process Check
             check_command           check_procs!-C java
           }
-
-    - name: Validate Nagios configuration syntax
+    - name: Ensure servers directory is included in nagios.cfg
+      lineinfile:
+        path: "{{ nagios_cfg_dir }}/nagios.cfg"
+        line: "cfg_dir={{ nagios_servers_dir }}"
+        state: present
+    
+    - name: Validate Nagios configuration
       command: "/usr/local/nagios/bin/nagios -v {{ nagios_cfg_dir }}/nagios.cfg"
       register: nagios_validation
       failed_when: "'Things look okay' not in nagios_validation.stdout"
-
-    - name: Show validation output
-      debug:
-        var: nagios_validation.stdout
-
-    - name: Reload Nagios (NO ROOT, via command pipe)
+    - name: Restart Nagios to apply changes
       shell: |
-        echo "[`date +%s`] RELOAD_CONFIG" > {{ nagios_cmd_pipe }}
-
-    - name: Notify user
+        pkill nagios || true
+        sleep 2
+        /usr/local/nagios/bin/nagios -d {{ nagios_cfg_dir }}/nagios.cfg
+        sleep 5
+      become: yes
+      become_user: nagios
+    - name: Notify
       debug:
-        msg: "Nagios reloaded successfully without root privileges."
-
-
+        msg: "Nagios updated and forced check scheduled."

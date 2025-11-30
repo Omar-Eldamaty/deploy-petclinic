@@ -102,8 +102,6 @@
         sleep 2
         /usr/local/nagios/bin/nagios -d {{ nagios_cfg_dir }}/nagios.cfg
         sleep 5
-      become: yes
-      become_user: nagios
     - name: Notify
       debug:
         msg: "Nagios updated and forced check scheduled."

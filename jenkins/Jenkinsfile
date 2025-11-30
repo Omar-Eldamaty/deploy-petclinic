@@ -304,42 +304,36 @@ pipeline {
             }
         }
         
-        stage('Monitoring') {
-            steps {
-                script {
-                    echo '╔════════════════════════════════════════════════════════════╗'
-                    echo '║             Stage 7: Verify Monitoring Status              ║'
-                    echo '╚════════════════════════════════════════════════════════════╝'
-                }
-                
-                sh '''
-                    echo "Checking monitoring status..."
-                    
-                    # Check if monitoring scripts exist
-                    MONITORING_DIR="/home/pet-clinic/monitoring"
-                    
-                    if [ -d "${MONITORING_DIR}" ]; then
-                        echo "✓ Monitoring directory exists: ${MONITORING_DIR}"
-                        
-                        # Check monitoring scripts
-                        if [ -f "${MONITORING_DIR}/monitor-all.sh" ]; then
-                            echo "✓ Monitoring script found"
-                            
-                            # Run monitoring check
-                            bash ${MONITORING_DIR}/monitor-all.sh || true
-                        else
-                            echo "⚠ Warning: Monitoring scripts not found"
-                            echo "  Monitoring can be configured later"
-                        fi
-                    else
-                        echo "⚠ Warning: Monitoring not configured"
-                        echo "  Run ansible/playbooks/install-monitoring.yml to set up monitoring"
-                    fi
-                    
-                    echo "✓ Monitoring check complete"
-                '''
-            }
+      stage('Monitoring') {
+      steps {
+        script {
+            echo '╔════════════════════════════════════════════════════════════╗'
+            echo '║             Stage 7: Deploy Monitoring                     ║'
+            echo '╚════════════════════════════════════════════════════════════╝'
         }
+        
+        sh '''
+            echo "Running monitoring playbook..."
+            
+            cd ansible/playbooks
+            
+            if [ -f "monitor-nagios.yml" ]; then
+                echo "✓ Found monitor-nagios.yml"
+                ansible-playbook monitor-nagios.yml
+                
+                if [ $? -eq 0 ]; then
+                    echo "✓ Monitoring deployed successfully"
+                else
+                    echo "✗ Monitoring deployment failed"
+                    exit 1
+                fi
+            else
+                echo "⚠ Warning: monitor-nagios.yml not found"
+                echo "  Skipping monitoring setup"
+            fi
+        '''
+    }
+} 
     }
     
     post {

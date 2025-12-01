@@ -1,239 +1,113 @@
 # PetClinic User Manual
 
-## Quick Installation Guide
+## Installation
 
-### Prerequisites
-- Ubuntu 20.04+ or Debian-based Linux
-- 4GB RAM minimum
-- 10GB free disk space
-- Internet connection
-- Root/sudo access
-
-### Installation Steps
-
-#### 1. Initial System Setup (as root)
+### 1. Clone Repository
 ```bash
-# Download setup script
-wget https://raw.githubusercontent.com/Omar-Eldamaty/deploy-petclinic/main/setup/setup-pet-clinic-user.sh
-
-# Run setup (creates user and installs Java)
-sudo bash setup-pet-clinic-user.sh
-```
-
-#### 2. Clone Repository (as pet-clinic user)
-```bash
-# Switch to pet-clinic user
-su - pet-clinic
-
-# Clone project
 git clone https://github.com/Omar-Eldamaty/deploy-petclinic.git
 cd deploy-petclinic
 ```
 
-#### 3. Install Ansible
-```bash
-sudo bash scripts/install-ansible.sh
-```
+### 2. Install Services
 
-#### 4. Install Services
+**Install Tomcat:**
 ```bash
-# Install Tomcat (runs on port 9090)
 ansible-playbook ansible/playbooks/tomcat.yml
+```
 
-# Install Jenkins (runs on port 8080)
+**Install Jenkins:**
+```bash
 ansible-playbook ansible/playbooks/jenkins.yml
-
-# Install Monitoring (runs on port 80)
-ansible-playbook ansible/playbooks/install-monitoring.yml
 ```
 
-#### 5. Configure Jenkins
-
-**Access Jenkins:**
+**Install Monitoring:**
 ```bash
-# Open browser to: http://localhost:8080
-# Get initial password:
-cat ~/jenkins/secrets/initialAdminPassword
+ansible-playbook ansible/playbooks/monitor-nagios.yml
 ```
 
-**Create Pipeline:**
-1. Install suggested plugins
-2. Create admin user
-3. New Item → Pipeline
-4. Name: `petclinic-pipeline`
-5. Pipeline from SCM → Git
-6. Repository: `https://github.com/Omar-Eldamaty/deploy-petclinic.git`
-7. Script Path: `jenkins/Jenkinsfile`
-8. Save
+### 3. Setup Jenkins Pipeline
 
-#### 6. First Deployment
+1. Open Jenkins: `http://localhost:8080`
+2. Get password: `cat ~/jenkins/secrets/initialAdminPassword`
+3. Install suggested plugins
+4. Create new Pipeline job
+5. Configure Git repository: `https://github.com/Omar-Eldamaty/deploy-petclinic.git`
+6. Set script path: `jenkins/Jenkinsfile`
+7. Click "Build Now"
 
-**Option A - Via Jenkins (Automated):**
+## Access Applications
+
+| Application | URL | Credentials |
+|-------------|-----|-------------|
+| PetClinic | http://localhost:9090/petclinic | None |
+| Tomcat Manager | http://localhost:9090/manager | admin / 123 |
+| Jenkins | http://localhost:8080 | From file above |
+| Nagios | http://localhost/nagios | nagiosadmin / nagios |
+
+## Daily Use
+
+### Deploy Application
+Jenkins automatically deploys when you push to GitHub (checks every 2 minutes).
+
+**Manual deployment:**
 ```bash
-# Just click "Build Now" in Jenkins
-# Pipeline will automatically build and deploy
+cd spring-petclinic
+./mvnw clean package -DskipTests
+cp target/*.war ~/tomcat/webapps/ROOT.war
 ```
 
-**Option B - Manual Deployment:**
+### Check Status
 ```bash
-# Build application
-bash scripts/build-petclinic.sh
+# Check if services are running
+ps aux | grep -E 'tomcat|jenkins'
 
-# Deploy to Tomcat
-bash scripts/deploy-to-root.sh
-```
-
-### Verification
-
-#### Check All Services
-```bash
-# Tomcat
-curl http://localhost:9090/
-
-# Jenkins
-curl http://localhost:8080/
-
-# PetClinic Application
+# Check application
 curl http://localhost:9090/petclinic
-
-# Monitoring
-curl http://localhost/nagios/
 ```
 
-#### Access Applications
-
-| Service | URL | Default Credentials |
-|---------|-----|---------------------|
-| **PetClinic** | http://localhost:9090/petclinic | None |
-| **Tomcat Manager** | http://localhost:9090/manager | admin / 123 |
-| **Jenkins** | http://localhost:8080 | admin / (from file) |
-| **Nagios** | http://localhost/nagios | nagiosadmin / nagios |
-
-### Daily Operations
-
-#### Deploy New Changes
-```bash
-# Automatic (via Jenkins)
-# - Push code to GitHub
-# - Jenkins detects changes (every 2 minutes)
-# - Builds and deploys automatically
-
-# Manual
-cd ~/deploy-petclinic
-git pull
-bash scripts/build-petclinic.sh
-bash scripts/deploy-to-root.sh
-```
-
-#### Check Logs
+### View Logs
 ```bash
 # Tomcat logs
 tail -f ~/tomcat/logs/catalina.out
 
-# Jenkins logs
+# Jenkins logs  
 tail -f ~/jenkins/jenkins.log
-
-# Application logs
-tail -f ~/tomcat/logs/localhost.*.log
 ```
 
-#### Restart Services
+### Restart Services
 ```bash
 # Restart Tomcat
 ~/tomcat/bin/shutdown.sh
 ~/tomcat/bin/startup.sh
-
-# Restart Jenkins
-pkill -f jenkins.war
-cd ~ && nohup java -jar jenkins/jenkins.war --httpPort=8080 > jenkins/jenkins.log 2>&1 &
 
 # Restart Nagios
 pkill nagios
 /usr/local/nagios/bin/nagios -d /usr/local/nagios/etc/nagios.cfg
 ```
 
-### Troubleshooting
+## Troubleshooting
 
-#### Application Won't Start
+**Application not loading?**
 ```bash
-# Check if Tomcat is running
+# Check Tomcat is running
 ps aux | grep tomcat
 
-# Check port availability
+# Check port
 netstat -tlnp | grep 9090
 
-# Review logs
-tail -100 ~/tomcat/logs/catalina.out
+# View errors
+tail -50 ~/tomcat/logs/catalina.out
 ```
 
-#### Jenkins Build Fails
+**Build fails in Jenkins?**
+- Check console output in Jenkins web UI
+- Verify Java is installed: `java -version`
+
+**Port already in use?**
 ```bash
-# Check Java versions
-java21  # Should show Java 21
-java25  # Should show Java 25
-
-# Check Maven
-mvn -version
-
-# View Jenkins console output in web UI
-```
-
-#### Port Conflicts
-```bash
-# Find process using port
+# Find what's using the port
 sudo lsof -i :9090
 
-# Kill process if needed
+# Kill the process
 sudo kill -9 <PID>
 ```
-### Maintenance
-
-#### Update Application
-```bash
-cd ~/deploy-petclinic
-git pull
-# Jenkins will auto-deploy, or run manually:
-bash scripts/build-petclinic.sh
-bash scripts/deploy-to-root.sh
-```
-
-#### Clean Build
-```bash
-cd ~/deploy-petclinic/spring-petclinic
-./mvnw clean
-```
-
-#### Backup Configuration
-```bash
-# Backup important files
-tar -czf ~/backup-$(date +%Y%m%d).tar.gz \
-  ~/tomcat/conf \
-  ~/jenkins/config.xml \
-  /usr/local/nagios/etc
-```
-
-### Uninstallation
-
-#### Remove Services
-```bash
-# Stop all services
-~/tomcat/bin/shutdown.sh
-pkill -f jenkins.war
-sudo pkill nagios
-
-# Remove directories
-rm -rf ~/tomcat ~/jenkins ~/deploy-petclinic
-
-# Remove user (as root)
-sudo userdel -r pet-clinic
-```
-
-### Getting Help
-
-#### Check Service Status
-```bash
-# Quick health check
-ps aux | grep -E 'tomcat|jenkins|nagios'
-netstat -tlnp | grep -E '8080|9090|80'
-```
-

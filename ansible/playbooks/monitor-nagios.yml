@@ -1,12 +1,11 @@
 ---
-- name: Monitor PetClinic HTTP + Tomcat process (rootless)
+- name: Monitor PetClinic HTTP + Tomcat process
   hosts: localhost
   become: no
   vars:
     nagios_cfg_dir: "/usr/local/nagios/etc"
     nagios_objects_dir: "/usr/local/nagios/etc/objects"
     nagios_servers_dir: "/usr/local/nagios/etc/servers"
-    nagios_cmd_pipe: "/usr/local/nagios/var/rw/nagios.cmd"
     tomcat_host: "127.0.0.1"
     tomcat_port: "9090"
     petclinic_url: "/petclinic"
@@ -17,24 +16,14 @@
         path: "{{ nagios_servers_dir }}"
         state: directory
         mode: "0770"
-    
-    - name: Ensure nagios.cfg is readable
-      file:
-        path: "{{ nagios_cfg_dir }}/nagios.cfg"
-        mode: "0640"
-    
+
     - name: Fix lock file location
       lineinfile:
         path: "{{ nagios_cfg_dir }}/nagios.cfg"
         regexp: '^lock_file='
         line: 'lock_file=/usr/local/nagios/var/nagios.lock'
-    
-    - name: Ensure objects directory exists
-      file:
-        path: "{{ nagios_objects_dir }}"
-        state: directory
-        mode: "0770"
-    - name: Add check_http command for PetClinic
+
+    - name: Add check commands
       blockinfile:
         path: "{{ nagios_objects_dir }}/commands.cfg"
         marker: "# {mark} ANSIBLE MANAGED PETCLINIC COMMAND"
@@ -47,29 +36,8 @@
               command_name    check_procs
               command_line    /usr/local/nagios/libexec/check_procs $ARG1$
           }
-    - name: Remove duplicate localhost host definition if exists
-      file:
-        path: "{{ nagios_servers_dir }}/localhost_host.cfg"
-        state: absent
-    
-    - name: Find files with illegal service descriptions
-      shell: grep -l "Tomcat Application (petclinic)" {{ nagios_servers_dir }}/* {{ nagios_objects_dir }}/* 2>/dev/null || true
-      register: illegal_files
-      changed_when: false
-    
-    - name: Remove files with illegal service descriptions
-      file:
-        path: "{{ item }}"
-        state: absent
-      loop: "{{ illegal_files.stdout_lines }}"
-      when: illegal_files.stdout_lines | length > 0
-    
-    - name: Remove existing petclinic services to avoid duplicates
-      file:
-        path: "{{ nagios_servers_dir }}/petclinic_services.cfg"
-        state: absent
-    
-    - name: Deploy PetClinic service for localhost
+
+    - name: Deploy PetClinic service
       copy:
         dest: "{{ nagios_servers_dir }}/petclinic_services.cfg"
         mode: "0660"
@@ -86,22 +54,25 @@
             service_description     Tomcat Process Check
             check_command           check_procs!-C java
           }
+
     - name: Ensure servers directory is included in nagios.cfg
       lineinfile:
         path: "{{ nagios_cfg_dir }}/nagios.cfg"
         line: "cfg_dir={{ nagios_servers_dir }}"
         state: present
-    
+
     - name: Validate Nagios configuration
       command: "/usr/local/nagios/bin/nagios -v {{ nagios_cfg_dir }}/nagios.cfg"
       register: nagios_validation
       failed_when: "'Things look okay' not in nagios_validation.stdout"
-    - name: Restart Nagios to apply changes
+
+    - name: Restart Nagios
       shell: |
         pkill nagios || true
         sleep 2
         /usr/local/nagios/bin/nagios -d {{ nagios_cfg_dir }}/nagios.cfg
         sleep 5
+
     - name: Notify
       debug:
-        msg: "Nagios updated and forced check scheduled."
+        msg: "Nagios monitoring configured successfully"

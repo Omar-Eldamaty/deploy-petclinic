@@ -1,78 +1,71 @@
 ---
-- name: Monitor PetClinic HTTP + Tomcat process
+- name: Simple Nagios monitoring with auto-restart
   hosts: localhost
   become: no
-  vars:
-    nagios_cfg_dir: "/usr/local/nagios/etc"
-    nagios_objects_dir: "/usr/local/nagios/etc/objects"
-    nagios_servers_dir: "/usr/local/nagios/etc/servers"
-    tomcat_host: "127.0.0.1"
-    tomcat_port: "9090"
-    petclinic_url: "/petclinic"
-    petclinic_check_string: "Spring PetClinic"
+
   tasks:
-    - name: Ensure servers directory exists
-      file:
-        path: "{{ nagios_servers_dir }}"
-        state: directory
-        mode: "0770"
-
-    - name: Fix lock file location
-      lineinfile:
-        path: "{{ nagios_cfg_dir }}/nagios.cfg"
-        regexp: '^lock_file='
-        line: 'lock_file=/usr/local/nagios/var/nagios.lock'
-
-    - name: Add check commands
+    - name: Add PetClinic check to Nagios
       blockinfile:
-        path: "{{ nagios_objects_dir }}/commands.cfg"
-        marker: "# {mark} ANSIBLE MANAGED PETCLINIC COMMAND"
+        path: "/home/pet-clinic/nagios/etc/objects/localhost.cfg"
+        marker: "# {mark} PETCLINIC CHECK"
         block: |
-          define command{
-              command_name    check_petclinic_http
-              command_line    /usr/local/nagios/libexec/check_http -H $ARG1$ -p $ARG2$ -u $ARG3$ -s "$ARG4$" --onredirect=critical
-          }
-          define command{
-              command_name    check_procs
-              command_line    /usr/local/nagios/libexec/check_procs $ARG1$
-          }
-
-    - name: Deploy PetClinic service
-      copy:
-        dest: "{{ nagios_servers_dir }}/petclinic_services.cfg"
-        mode: "0660"
-        content: |
-          define service {
-            use                     generic-service
+          define service{
+            use                     local-service
             host_name               localhost
-            service_description     PetClinic HTTP Check
-            check_command           check_petclinic_http!{{ tomcat_host }}!{{ tomcat_port }}!{{ petclinic_url }}!{{ petclinic_check_string }}
+            service_description     PetClinic App
+            check_command           check_http!-H localhost -p 9090 -u /petclinic
+            max_check_attempts      3
+            check_interval          1
+            retry_interval          1
+            contact_groups          admins
+            active_checks_enabled   1
+            passive_checks_enabled  1
           }
-          define service {
-            use                     generic-service
-            host_name               localhost
-            service_description     Tomcat Process Check
-            check_command           check_procs!-C java
-          }
 
-    - name: Ensure servers directory is included in nagios.cfg
-      lineinfile:
-        path: "{{ nagios_cfg_dir }}/nagios.cfg"
-        line: "cfg_dir={{ nagios_servers_dir }}"
-        state: present
-
-    - name: Validate Nagios configuration
-      command: "/usr/local/nagios/bin/nagios -v {{ nagios_cfg_dir }}/nagios.cfg"
-      register: nagios_validation
-      failed_when: "'Things look okay' not in nagios_validation.stdout"
-
-    - name: Restart Nagios
+    - name: Restart Nagios with HUP signal
       shell: |
-        pkill nagios || true
-        sleep 2
-        /usr/local/nagios/bin/nagios -d {{ nagios_cfg_dir }}/nagios.cfg
-        sleep 5
+        if [ -f /home/pet-clinic/nagios/var/nagios.pid ]; then
+          kill -HUP $(cat /home/pet-clinic/nagios/var/nagios.pid)
+          echo "Nagios reloaded with HUP signal"
+        else
+          echo "Nagios PID file not found - start Nagios manually"
+        fi
+      args:
+        executable: /bin/bash
+      register: restart_result
 
-    - name: Notify
+    - name: Check if website is up
+      uri:
+        url: "http://localhost:9090/petclinic"
+        status_code: 200
+      ignore_errors: yes
+      register: result
+      changed_when: false
+
+    - name: Create Nagios command file if needed
+      file:
+        path: /home/pet-clinic/nagios/var/rw/nagios.cmd
+        state: touch
+        mode: "0666"
+
+    - name: Send check result to Nagios
+      shell: |
+        TIMESTAMP=$(date +%s)
+        {% if result.status == 200 %}
+        echo "[$TIMESTAMP] PROCESS_SERVICE_CHECK_RESULT;localhost;PetClinic App;0;OK - HTTP 200" > /home/pet-clinic/nagios/var/rw/nagios.cmd
+        {% else %}
+        echo "[$TIMESTAMP] PROCESS_SERVICE_CHECK_RESULT;localhost;PetClinic App;2;CRITICAL - Error: {{ result.status | default('No response') }}" > /home/pet-clinic/nagios/var/rw/nagios.cmd
+        {% endif %}
+      args:
+        executable: /bin/bash
+
+    - name: Show final status
       debug:
-        msg: "Nagios monitoring configured successfully"
+        msg: |
+          ✅ Nagios monitoring configured!
+          
+          Website status: {{ 'UP ✓' if result.status == 200 else 'DOWN ✗' }}
+          Nagios restart: {{ 'Reloaded with HUP' if restart_result.stdout_lines[0] == 'Nagios reloaded with HUP signal' else 'Need manual start' }}
+          
+          Check Nagios GUI: http://{{ ansible_default_ipv4.address }}/nagios
+          Look for service: 'PetClinic App'

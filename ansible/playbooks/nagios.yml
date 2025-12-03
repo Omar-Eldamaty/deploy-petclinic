@@ -1,25 +1,27 @@
 ---
-################################################################################
-# Playbook: install-nagios.yml
-# Description: Install and configure Nagios monitoring system
-# Target: nagios_servers
-################################################################################
-
-- name: Install and Configure Nagios
+- name: Install and Configure Nagios in HOME
   hosts: localhost
   become: yes
   vars:
     nagios_version: "4.4.14"
     nagios_plugins_version: "2.4.6"
+    nagios_prefix: "/home/pet-clinic/nagios"
+    nagios_user: "nagios"
+    nagios_group: "nagcmd"
     nagios_admin_user: "nagiosadmin"
     nagios_admin_password: "123"
-    
-  tasks:
-    - name: Update apt cache
-      apt:
-        update_cache: yes
-      when: ansible_os_family == "Debian"
 
+  tasks:
+    # ==================== TASK 1: Directory Setup ====================
+    - name: Ensure HOME directory exists
+      file:
+        path: "{{ nagios_prefix }}"
+        state: directory
+        mode: "0755"
+        owner: pet-clinic
+        group: pet-clinic
+
+    # ==================== TASK 2: Install Dependencies ====================
     - name: Install dependencies
       apt:
         name:
@@ -34,34 +36,34 @@
           - libapache2-mod-php
           - libgd-dev
           - libssl-dev
-          - libapache2-mod-php
           - php-gd
           - openssl
-          - libssl-dev
           - python3-passlib
         state: present
-      when: ansible_os_family == "Debian"
+        update_cache: yes
 
-    - name: Create nagios user
+    # ==================== TASK 3: User/Group Setup ====================
+    - name: Create nagios system user
       user:
-        name: nagios
+        name: "{{ nagios_user }}"
         system: yes
         shell: /bin/bash
 
     - name: Create nagcmd group
       group:
-        name: nagcmd
+        name: "{{ nagios_group }}"
         state: present
 
-    - name: Add nagios and www-data to nagcmd group
+    - name: Add users to nagcmd
       user:
         name: "{{ item }}"
-        groups: nagcmd
+        groups: "{{ nagios_group }}"
         append: yes
       loop:
-        - nagios
+        - "{{ nagios_user }}"
         - www-data
 
+    # ==================== TASK 4: Download & Extract Nagios Core ====================
     - name: Download Nagios Core
       get_url:
         url: "https://assets.nagios.com/downloads/nagioscore/releases/nagios-{{ nagios_version }}.tar.gz"
@@ -73,32 +75,34 @@
         dest: /tmp
         remote_src: yes
 
-    - name: Configure Nagios
+    # ==================== TASK 5: Build & Install Nagios Core ====================
+    - name: Configure Nagios (prefix = home)
       shell: |
         cd /tmp/nagios-{{ nagios_version }}
-        ./configure --with-command-group=nagcmd
+        ./configure --prefix={{ nagios_prefix }} --with-command-group={{ nagios_group }}
       args:
-        creates: /tmp/nagios-{{ nagios_version }}/Makefile
+        creates: "/tmp/nagios-{{ nagios_version }}/Makefile"
 
-    - name: Compile and install Nagios
+    - name: Compile and install Nagios to HOME
       shell: |
         cd /tmp/nagios-{{ nagios_version }}
         make all
         make install
-        make install-init
         make install-config
         make install-commandmode
         make install-webconf
       args:
-        creates: /usr/local/nagios/bin/nagios
+        creates: "{{ nagios_prefix }}/bin/nagios"
 
-    - name: Create nagiosadmin user for web interface
+    # ==================== TASK 6: Web Interface Authentication ====================
+    - name: Create htpasswd admin user
       htpasswd:
-        path: /usr/local/nagios/etc/htpasswd.users
+        path: "{{ nagios_prefix }}/etc/htpasswd.users"
         name: "{{ nagios_admin_user }}"
         password: "{{ nagios_admin_password }}"
         create: yes
 
+    # ==================== TASK 7: Download & Install Nagios Plugins ====================
     - name: Download Nagios Plugins
       get_url:
         url: "https://nagios-plugins.org/download/nagios-plugins-{{ nagios_plugins_version }}.tar.gz"
@@ -110,22 +114,80 @@
         dest: /tmp
         remote_src: yes
 
-    - name: Configure Nagios Plugins
+    - name: Configure Plugins (install into HOME)
       shell: |
         cd /tmp/nagios-plugins-{{ nagios_plugins_version }}
-        ./configure --with-nagios-user=nagios --with-nagios-group=nagios
+        ./configure --prefix={{ nagios_prefix }} --with-nagios-user={{ nagios_user }} --with-nagios-group={{ nagios_user }}
       args:
-        creates: /tmp/nagios-plugins-{{ nagios_plugins_version }}/Makefile
+        creates: "/tmp/nagios-plugins-{{ nagios_plugins_version }}/Makefile"
 
-    - name: Compile and install Nagios Plugins
+    - name: Install Plugins
       shell: |
         cd /tmp/nagios-plugins-{{ nagios_plugins_version }}
         make
         make install
       args:
-        creates: /usr/local/nagios/libexec/check_http
+        creates: "{{ nagios_prefix }}/libexec/check_http"
 
-    - name: Enable Apache modules
+    # ==================== TASK 8: Set Permissions for Monitoring Files ====================
+    - name: Set permissions on Nagios configuration directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ nagios_user }}"
+        group: "{{ nagios_group }}"
+        mode: "0775"
+        recurse: yes
+      loop:
+        - "{{ nagios_prefix }}/etc"
+        - "{{ nagios_prefix }}/etc/objects"
+        - "{{ nagios_prefix }}/var"
+        - "{{ nagios_prefix }}/var/spool"
+        - "{{ nagios_prefix }}/var/spool/checkresults"
+
+    - name: Ensure rw directory exists for command pipe
+      file:
+        path: "{{ nagios_prefix }}/var/rw"
+        state: directory
+        owner: "{{ nagios_user }}"
+        group: "{{ nagios_group }}"
+        mode: "0775"
+
+    - name: Set permissions on command file (external command pipe)
+      file:
+        path: "{{ nagios_prefix }}/var/rw/nagios.cmd"
+        state: touch
+        owner: "{{ nagios_user }}"
+        group: "{{ nagios_group }}"
+        mode: "0664"
+
+    - name: Set executable permissions on plugins
+      file:
+        path: "{{ nagios_prefix }}/libexec"
+        state: directory
+        mode: "0755"
+        recurse: yes
+        owner: "{{ nagios_user }}"
+        group: "{{ nagios_group }}"
+
+    - name: Set permissions on Nagios binary
+      file:
+        path: "{{ nagios_prefix }}/bin/nagios"
+        mode: "0755"
+        owner: "{{ nagios_user }}"
+        group: "{{ nagios_group }}"
+
+    - name: Set permissions on support binaries
+      file:
+        path: "{{ nagios_prefix }}/bin"
+        state: directory
+        mode: "0755"
+        recurse: yes
+        owner: "{{ nagios_user }}"
+        group: "{{ nagios_group }}"
+
+    # ==================== TASK 9: Apache Configuration ====================
+    - name: Enable Apache CGI & Rewrite
       apache2_module:
         name: "{{ item }}"
         state: present
@@ -139,16 +201,15 @@
         state: restarted
         enabled: yes
 
-    - name: Enable and start Nagios
-      systemd:
-        name: nagios
-        state: started
-        enabled: yes
-
+    # ==================== TASK 10: Display Information ====================
     - name: Display Nagios access information
       debug:
         msg:
-          - "Nagios is installed successfully!"
-          - "Access Nagios at: http://{{ ansible_host }}/nagios"
+          - "Nagios installed in HOME: {{ nagios_prefix }}"
+          - "Nagios URL: http://{{ ansible_default_ipv4.address }}/nagios"
           - "Username: {{ nagios_admin_user }}"
           - "Password: {{ nagios_admin_password }}"
+          - "Configuration directory: {{ nagios_prefix }}/etc"
+          - "Plugins directory: {{ nagios_prefix }}/libexec"
+          - "To add new hosts/services, edit: {{ nagios_prefix }}/etc/objects/"
+          - "Permissions set for easy editing by pet-clinic user"

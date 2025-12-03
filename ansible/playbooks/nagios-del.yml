@@ -1,0 +1,110 @@
+---
+- name: Uninstall Nagios and all dependencies
+  hosts: localhost
+  become: yes
+  vars:
+    nagios_prefix: "/home/pet-clinic/nagios"
+    nagios_user: "nagios"
+    nagios_group: "nagcmd"
+    
+  tasks:
+    - name: Check if Nagios process is running manually
+      shell: |
+        pkill -f "{{ nagios_prefix }}/bin/nagios"
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Remove Nagios installation directory
+      file:
+        path: "{{ nagios_prefix }}"
+        state: absent
+
+    - name: Remove downloaded source files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/nagios-*"
+        - "/tmp/nagios-plugins-*"
+
+    - name: Remove Apache Nagios configuration
+      file:
+        path: /etc/apache2/conf-enabled/nagios.conf
+        state: absent
+      ignore_errors: yes
+
+    - name: Remove Apache Nagios configuration from sites-available
+      file:
+        path: /etc/apache2/sites-available/nagios.conf
+        state: absent
+      ignore_errors: yes
+
+    - name: Remove Apache Nagios symlink from sites-enabled
+      file:
+        path: /etc/apache2/sites-enabled/nagios.conf
+        state: absent
+      ignore_errors: yes
+
+    - name: Remove nagios user
+      user:
+        name: "{{ nagios_user }}"
+        state: absent
+        remove: yes
+
+    - name: Remove nagcmd group
+      group:
+        name: "{{ nagios_group }}"
+        state: absent
+
+    - name: Remove www-data from any remaining groups
+      user:
+        name: www-data
+        groups: ""
+        append: no
+
+    - name: Remove any Nagios cron jobs
+      cron:
+        user: "{{ nagios_user }}"
+        state: absent
+
+    - name: Check for and remove any Nagios systemd service files
+      find:
+        paths:
+          - /etc/systemd/system
+          - /lib/systemd/system
+        patterns: "*nagios*"
+        file_type: file
+      register: nagios_service_files
+
+    - name: Remove found Nagios service files
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ nagios_service_files.files }}"
+      when: nagios_service_files.files | length > 0
+
+    - name: Reload systemd daemon (if any services were removed)
+      systemd:
+        daemon_reload: yes
+      when: nagios_service_files.files | length > 0
+
+    - name: Restart Apache
+      systemd:
+        name: apache2
+        state: restarted
+
+    - name: Clean up apt cache
+      apt:
+        autoclean: yes
+
+    - name: Verify cleanup
+      shell: |
+        ls -la {{ nagios_prefix }} 2>/dev/null || echo "Nagios directory removed"
+        id {{ nagios_user }} 2>/dev/null || echo "Nagios user removed"
+        getent group {{ nagios_group }} 2>/dev/null || echo "Nagios group removed"
+      register: cleanup_check
+      changed_when: false
+
+    - name: Display cleanup status
+      debug:
+        msg: "{{ cleanup_check.stdout_lines }}"
